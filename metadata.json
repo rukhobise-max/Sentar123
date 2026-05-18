@@ -1,0 +1,11 @@
+{
+  "name": "DroidDash - Device Management",
+  "description": "Professional web dashboard for device monitoring including SMS, call logs, location, and real-time hardware status.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

